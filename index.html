@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>💧 Monitor Hidroponik</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .status-box { padding: 20px; border-radius: 10px; color: white; text-align: center; font-weight: bold; }
+        .recommendation { margin-top: 15px; padding: 12px; border-radius: 8px; }
+        .chart-container { height: 300px; margin-top: 20px; }
+        .download-btn { margin-top: 20px; }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container py-4">
+        <h1 class="text-center mb-4">💧 Sistem Monitor Air Hidroponik</h1>
+        
+        <!-- Real-time Data Cards -->
+        <div class="row text-center mb-4">
+            <div class="col-12 col-md-4 mb-3">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="text-muted">TDS Saat Ini</h5>
+                        <h3 id="tds-value">--</h3>
+                        <small class="text-muted">ppm</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-4 mb-3">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="text-muted">EC</h5>
+                        <h3 id="ec-value">--</h3>
+                        <small class="text-muted">mS/cm</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-4 mb-3">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="text-muted">Suhu</h5>
+                        <h3 id="temp-value">--</h3>
+                        <small class="text-muted">°C</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Box -->
+        <div class="text-center mb-4">
+            <div id="status-box" class="status-box bg-secondary">Memuat...</div>
+            <div id="recommendation" class="recommendation bg-light text-dark">Menunggu data...</div>
+        </div>
+
+        <!-- Chart -->
+        <div class="chart-container">
+            <canvas id="sensorChart"></canvas>
+        </div>
+
+        <!-- Download Button -->
+        <div class="text-center download-btn">
+            <a href="predictor.zip" class="btn btn-outline-primary">
+                📥 Download Aplikasi Prediksi (LSTM/ARIMA Offline)
+            </a>
+            <p class="mt-2 small text-muted">
+                Jalankan di PC Anda untuk prediksi berbasis data microSD.
+            </p>
+        </div>
+
+        <!-- Petunjuk -->
+        <div class="alert alert-info small mt-4">
+            <strong>ℹ️ Panduan Status:</strong><br>
+            <span class="text-success">🟢 BAIK</span>: Air ideal untuk tanaman.<br>
+            <span class="text-warning">🟡 SEDANG</span>: Periksa nutrisi atau suhu.<br>
+            <span class="text-danger">🔴 BURUK</span>: Segera lakukan tindakan!
+        </div>
+    </div>
+
+    <script>
+        // === KONFIGURASI ===
+        // GANTI DENGAN URL GOOGLE SHEET-MU (publish sebagai CSV)
+        const GOOGLE_SHEET_CSV = "https://docs.google.com/spreadsheets/d/1abc123/export?format=csv";
+
+        // Inisialisasi chart
+        const ctx = document.getElementById('sensorChart').getContext('2d');
+        let sensorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'TDS (ppm)', data: [], borderColor: 'blue', tension: 0.3 },
+                    { label: 'EC (mS/cm)', data: [], borderColor: 'green', tension: 0.3 },
+                    { label: 'Suhu (°C)', data: [], borderColor: 'red', tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { x: { display: true }, y: { beginAtZero: false } }
+            }
+        });
+
+        let chartData = { tds: [], ec: [], temp: [], labels: [] };
+
+        // Evaluasi status (sama seperti di Flask)
+        function evaluateStatus(tds, ec, temp) {
+            const tdsGood = 400 <= tds && tds <= 1200;
+            const ecGood = 0.8 <= ec && ec <= 2.4;
+            const tempGood = 18 <= temp && temp <= 24;
+
+            if (tdsGood && ecGood && tempGood) {
+                return { status: "BAIK", color: "success", rec: "Air ideal untuk tanaman." };
+            } else if (200 <= tds && tds <= 1500 && 
+                       0.4 <= ec && ec <= 3.0 && 
+                       15 <= temp && temp <= 28) {
+                return { status: "SEDANG", color: "warning", rec: "Periksa nutrisi, pertimbangkan penggantian air." };
+            } else {
+                return { status: "BURUK", color: "danger", rec: "Segera lakukan tindakan! Risiko tinggi bagi tanaman." };
+            }
+        }
+
+        // Ambil data dari Google Sheet
+        async function updateData() {
+            try {
+                const response = await fetch(GOOGLE_SHEET_CSV);
+                const text = await response.text();
+                const lines = text.trim().split("\n");
+                
+                if (lines.length < 2) {
+                    throw new Error("No data");
+                }
+
+                // Ambil baris terakhir (skip header)
+                const lastLine = lines[lines.length - 1];
+                const [timestamp, tdsStr, ecStr, tempStr] = lastLine.split(",");
+
+                const tds = parseFloat(tdsStr);
+                const ec = parseFloat(ecStr);
+                const temp = parseFloat(tempStr);
+
+                if (isNaN(tds) || isNaN(ec) || isNaN(temp)) {
+                    throw new Error("Invalid data");
+                }
+
+                // Update UI
+                document.getElementById('tds-value').innerText = tds.toFixed(0);
+                document.getElementById('ec-value').innerText = ec.toFixed(2);
+                document.getElementById('temp-value').innerText = temp.toFixed(1);
+
+                const { status, color, rec } = evaluateStatus(tds, ec, temp);
+                const statusBox = document.getElementById('status-box');
+                const recBox = document.getElementById('recommendation');
+
+                statusBox.innerText = `Status: ${status}`;
+                statusBox.className = `status-box bg-${color}`;
+                recBox.innerText = rec;
+                recBox.className = `recommendation bg-${color}-subtle text-${color}`;
+
+                // Update chart
+                const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                chartData.labels.push(now);
+                chartData.tds.push(tds);
+                chartData.ec.push(ec);
+                chartData.temp.push(temp);
+
+                if (chartData.labels.length > 10) {
+                    chartData.labels.shift();
+                    chartData.tds.shift();
+                    chartData.ec.shift();
+                    chartData.temp.shift();
+                }
+
+                sensorChart.data.labels = chartData.labels;
+                sensorChart.data.datasets[0].data = chartData.tds;
+                sensorChart.data.datasets[1].data = chartData.ec;
+                sensorChart.data.datasets[2].data = chartData.temp;
+                sensorChart.update();
+
+            } catch (e) {
+                console.error("Gagal muat data:", e);
+                document.getElementById('status-box').innerText = "⚠️ Tunggu data dari sensor...";
+                document.getElementById('recommendation').innerText = "Pastikan ESP32 aktif.";
+            }
+        }
+
+        // Update tiap 5 detik
+        setInterval(updateData, 5000);
+        updateData(); // Jalankan sekali saat buka
+    </script>
+</body>
+</html>
